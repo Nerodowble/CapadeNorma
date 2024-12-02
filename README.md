@@ -40,7 +40,7 @@ Passos para Instalação
 Clone o repositório do projeto:
 
 
-git clone https://github.com/seuusuario/CapaDeNormas.git
+git clone https://github.com/Nerodowble/CapadeNorma
 cd CapaDeNormas
 Crie e ative um ambiente virtual Python:
 
