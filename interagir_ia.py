@@ -1,51 +1,97 @@
-import requests
-import json
-import os
-from dotenv import load_dotenv
+import imaplib
+import email
+from email.header import decode_header
+import pandas as pd
 
-# Carrega as variáveis de ambiente
-load_dotenv()
+# Configurações do email
+EMAIL = "willian.lima@legalbot.com.br"
+PASSWORD = "jjuo udms btbl vozp"
+IMAP_SERVER = "imap.gmail.com"
 
-# Função para chamar a API do Google Gemini e gerar o resumo da origem
-def gerar_resumo(prompt, model_name="gemini-1.5-flash"):
-    """
-    Função que envia o prompt para a API do Google Gemini e retorna o resumo gerado.
-    :param prompt: Texto do prompt a ser enviado para a IA (string)
-    :param model_name: Nome do modelo a ser usado (string)
-    :return: Resumo gerado pela IA (string)
-    """
-    # API Key carregada do .env
-    api_key = os.getenv("GEMINI_API_KEY")
-    
-    # URL da API para o modelo específico
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-    
-    # Cabeçalhos da requisição
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
-    # Corpo da requisição com o prompt (descrição da origem)
-    data = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": prompt
-                    }
-                ]
-            }
-        ]
-    }
-    
-    # Fazer a requisição POST à API
-    response = requests.post(url, headers=headers, data=json.dumps(data))
-    
-    # Verificar se a requisição foi bem-sucedida
-    if response.status_code == 200:
-        response_data = response.json()
-        # Extrair o conteúdo gerado
-        content = response_data['candidates'][0]['content']['parts'][0]['text']
-        return content
-    else:
-        return f"Erro: {response.status_code} - {response.text}"
+# Conectar ao servidor IMAP
+mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+mail.login(EMAIL, PASSWORD)
+
+# Selecionar a pasta "[Gmail]/Todos os e-mails"
+mail.select('"[Gmail]/Todos os e-mails"')
+
+# Critério de busca: Emails enviados pelo remetente com "Bradesco"
+search_criteria = '(FROM "bradesco" SINCE "01-Jan-2024" BEFORE "09-Dec-2024")'
+
+# Buscar emails que atendem ao critério
+status, messages = mail.search(None, search_criteria)
+if status != "OK":
+    print("Nenhum email encontrado com os critérios fornecidos.")
+    mail.logout()
+    exit()
+
+email_ids = messages[0].split()
+print(f"Encontrados {len(email_ids)} emails do remetente 'Bradesco' no intervalo de datas.")
+
+# Listas para armazenar os dados
+email_titles = []
+email_texts = []
+email_senders = []
+email_recipients = []
+
+for idx, email_id in enumerate(email_ids):
+    # Mostrar progresso
+    print(f"Processando email {idx + 1} de {len(email_ids)}")
+
+    # Buscar o email pelo ID
+    status, msg_data = mail.fetch(email_id, "(RFC822)")
+    for response_part in msg_data:
+        if isinstance(response_part, tuple):
+            msg = email.message_from_bytes(response_part[1])
+            
+            # Decodificar o título
+            subject, encoding = decode_header(msg["Subject"])[0]
+            if isinstance(subject, bytes):
+                subject = subject.decode(encoding if encoding else "utf-8", errors="ignore")
+            else:
+                subject = subject or "(Sem título)"
+            email_titles.append(subject)
+            
+            # Obter o corpo
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    if content_type == "text/plain":
+                        try:
+                            body = part.get_payload(decode=True).decode("utf-8")
+                        except UnicodeDecodeError:
+                            body = part.get_payload(decode=True).decode("latin1", errors="ignore")
+                        break
+            else:
+                try:
+                    body = msg.get_payload(decode=True).decode("utf-8")
+                except UnicodeDecodeError:
+                    body = msg.get_payload(decode=True).decode("latin1", errors="ignore")
+            email_texts.append(body)
+
+            # Obter o remetente (quem enviou)
+            sender = msg["From"]
+            email_senders.append(sender if sender else "Desconhecido")
+
+            # Obter os destinatários (quem recebeu)
+            recipients = msg["To"]
+            if recipients:
+                recipients = recipients.replace("\r", "").replace("\n", "").replace(", ", ";")
+            email_recipients.append(recipients if recipients else "Desconhecido")
+
+# Fechar conexão
+mail.logout()
+
+# Criar DataFrame com os dados
+df = pd.DataFrame({
+    "Título": email_titles,
+    "Texto": email_texts,
+    "Remetente": email_senders,
+    "Destinatários": email_recipients
+})
+
+# Salvar em Excel
+df.to_excel("emails_bradesco_2024.xlsx", index=False)
+
+print(f"{len(email_titles)} emails encontrados e salvos no arquivo 'emails_bradesco_2024.xlsx'.")
